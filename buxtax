@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from subprocess import check_output, CalledProcessError
+from subprocess import check_output, CalledProcessError, call
 import logging as log
 from calendar import month_name
 import re
@@ -31,6 +31,7 @@ def main():
     parser.add_argument('--signature', '-s', action='store', type=str, help='Image to sign form (square image)')
     parser.add_argument('--location', '-l', action='store', type=str, help='Location')
     parser.add_argument('--date', '-d', action='store', type=str, help='Date', default=date.today().isoformat())
+    parser.add_argument('--nomail', '-m', action='store_false', help='Do not automatically prepare the email')
     args = parser.parse_args()
 
     if args.config is None and os.path.isfile("buxtax.json"):
@@ -63,8 +64,13 @@ def main():
     outfile = config.get("output", f"tob_{bux_data['year']}_{bux_data['month']}.pdf")
     generate_tax_form("tax_template.pdf", config, bux_data, outfile)
 
+    log.info("Please mail {outfile} to CPIC.TAXDIV@minfin.fed.be")
+
     outfile=outfile[:-4]+".svg" #hack way to make it have the same filename
     generate_epc_code(bux_data, config, outfile)
+
+    if config.get('nomail', True):
+        call(["xdg-open", f"mailto:CPIC.TAXDIV@minfin.fed.be?subject=TOB {month_name[bux_data['month']]} {bux_data['year']}&body=See form attached"])
 
 def get_taxed_total(lines, query):
     try:
@@ -163,7 +169,6 @@ def generate_epc_code(data, config, output):
         return
     qr = make_epc_qr(name="pchq be bb van het inningscentrum", iban="BE39679200229319", amount=tax_amount, text=note, bic="PCHQBEBBXXX")
     qr.save(output, scale=3)
-
 
 if __name__ == "__main__":
     main()
