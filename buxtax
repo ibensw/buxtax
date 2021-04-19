@@ -86,7 +86,6 @@ def parse_bux_report(filename):
     bux_lines = [line.strip() for line in bux_lines]
 
     date_line = bux_lines[0].split(' ')
-    print(date_line)
 
     data["month"] = MONTHS[date_line[-2]]
     data["year"] = int(date_line[-1])
@@ -155,10 +154,8 @@ def generate_epc_code(data, config, output):
     address = ", ".join(config["address"])
     month = month_name[data['month']].lower()
     note=f'{natnum} {config["name"]} {address} {month}'
-    print(note)
-    print(len(note))
     if len(note)> 140:
-        print("problem")
+        log.error("EPC description too long, qr code not generated")
         return
     qr = make_epc_qr(name="pchq be bb van het inningscentrum", iban="BE39679200229319", amount=tax_amount, text=note, bic="PCHQBEBBXXX")
     qr.save(output, scale=3)
