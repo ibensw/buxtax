@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+
+import argparse
+from subprocess import check_output, CalledProcessError
+import logging as log
+from calendar import month_name
+import re
+from PyPDF2 import PdfFileWriter, PdfFileReader
+from io import BytesIO
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+import json
+from datetime import date
+from segno.helpers import make_epc_qr
+import os.path
+
+MONTHS = {month_name[i]: i for i in range(1, 13)}
+TOTALREGEX = re.compile("^Total\\s+\\d+\\s+([\\d\\.]+) EUR\\s+([\\d\\.]+) EUR$")
+REQUIRED_ARGS=set(["input", "natnum", "name", "address", "signature"])
+
+log.basicConfig(format='%(levelname)s: %(message)s')
+
+def main():
+    parser = argparse.ArgumentParser(description='BUX Belgian tax report converter')
+    parser.add_argument('input', type=str, help='BUX tax report (pdf)')
+    parser.add_argument('--config', '-c', action='store', type=str, help='Config file')
+    parser.add_argument('--natnum', '-i', action='store', type=str, help='National number')
+    parser.add_argument('--name', '-n', action='store', type=str, help='Full name')
+    parser.add_argument('--address', '-a', action='append', type=str, help='Address lines')
+    parser.add_argument('--output', '-o', action='store', type=str, help='Output file (pdf)')
+    parser.add_argument('--signature', '-s', action='store', type=str, help='Image to sign form (square image)')
+    parser.add_argument('--location', '-l', action='store', type=str, help='Location')
+    parser.add_argument('--date', '-d', action='store', type=str, help='Date', default=date.today().isoformat())
+    args = parser.parse_args()
+
+    if args.config is None and os.path.isfile("buxtax.json"):
+        args.config = "buxtax.json"
+
+    config = {}
+    if args.config:
+        try:
+            conffile = open(args.config, "r")
+            config = json.load(conffile)
+        except Exception as e:
+            log.error(f"Could not open {args.config}: {e}")
+            return
+
+    overwrite_args = {k:v for k,v in vars(args).items() if v is not None}
+    config.update(overwrite_args)
+
+    missing_args = REQUIRED_ARGS - set([k for k,v in vars(args).items() if v is not None])
+    if missing_args:
+        missing_args = ", ".join(missing_args)
+        log.error(f"Missing config/arguments: {missing_args}")
+        return
+
+    config.setdefault("location", config["address"][-1].split(" ")[-1])
+
+    bux_data = parse_bux_report(args.input)
+
+    outfile = config.get("output", f"tob_{bux_data['year']}_{bux_data['month']}.pdf")
+    generate_tax_form("tax_template.pdf", config, bux_data, outfile)
+
+    outfile=outfile[:-4]+".svg" #hack way to make it have the same filename
+    generate_epc_code(bux_data, config, outfile)
+
+def get_taxed_total(lines, query):
+    try:
+        start = lines.index(query)
+    except ValueError:
+        return None, None
+    end = lines.index('', start)
+    totalline = lines[end+1]
+    total_basis, total_tax = TOTALREGEX.match(totalline).groups()
+    return (float(total_basis), float(total_tax))
+
+def parse_bux_report(filename):
+    data = {}
+    try:
+        bux_report = check_output(["pdftotext", "-layout", "-enc", "UTF-8", filename, "-"]).decode('utf-8')
+    except CalledProcessError as e:
+        log.error(f"Failed to call pdftotext: {e}")
+        return None
+
+    bux_lines = bux_report.split('\n')
+    bux_lines = [line.strip() for line in bux_lines]
+
+    date_line = bux_lines[0].split(' ')
+    print(date_line)
+
+    data["month"] = MONTHS[date_line[-2]]
+    data["year"] = int(date_line[-1])
+
+    etf_amount, etf_tax = get_taxed_total(bux_lines, "Tax on stock-exchange transactions in ETFs (0.12%)")
+    share_amount, share_tax = get_taxed_total(bux_lines, "Tax on stock-exchange transactions in shares (0.35%)")
+
+    if etf_amount is not None:
+        data["etf"] = {"amount": etf_amount, "tax": etf_tax}
+    if share_amount is not None:
+        data["share"] = {"amount": share_amount, "tax": share_tax}
+
+    return data
+
+
+def generate_tax_form(template, config, data, outfile):
+    overlay_pages={}
+    overlay_pages[0] = BytesIO()
+    can = canvas.Canvas(overlay_pages[0], pagesize=A4)
+    can.drawString(305, 699, "x"*25)
+    can.drawString(305, 687, "x"*25)
+    can.drawString(305, 655, config["natnum"])
+    can.drawString(305, 643, config["name"])
+    y = 620
+    for addrline in config.get("address", []):
+        can.drawString(305, y, addrline)
+        y-=12
+
+    totaltax = 0.0
+    for (taxtype, offset) in [("etf", 540), ("share", 460)]:
+        if taxtype in data:
+            can.drawRightString(390, offset, f"{data[taxtype]['amount']:.2f}")
+            can.drawRightString(520, offset, f"{data[taxtype]['tax']:.2f}")
+            totaltax += data[taxtype]['tax']
+
+    can.drawRightString(520, 330, f"{totaltax:.2f}")
+    can.save()
+
+    overlay_pages[1] = BytesIO()
+    can = canvas.Canvas(overlay_pages[1], pagesize=A4)
+    can.drawRightString(445, 372, f"{totaltax:.2f}")
+    signdate = date(*map(int, config["date"].split("-")))
+    can.drawString(85, 255, f'{config["location"]}, {signdate.strftime("%B %d, %Y")}')
+    can.drawImage(config["signature"], 320, 230, width=75, height=75)
+    can.save()
+
+    baseform = PdfFileReader(template)
+    output = PdfFileWriter()
+
+    for npage in range(baseform.getNumPages()):
+        page = baseform.getPage(npage)
+        if npage in overlay_pages:
+            overlay_pages[npage].seek(0)
+            overlay = PdfFileReader(overlay_pages[npage])
+            page.mergePage(overlay.getPage(0))
+        output.addPage(page)
+
+    outputStream = open(outfile, "wb")
+    output.write(outputStream)
+    outputStream.close()
+
+
+def generate_epc_code(data, config, output):
+    tax_amount=data.get("etf", {"tax": 0.0})["tax"] + data.get("share", {"tax": 0.0})["tax"]
+    natnum=config["natnum"].replace(".", "").replace("-", "")
+    address = ", ".join(config["address"])
+    month = month_name[data['month']].lower()
+    note=f'{natnum} {config["name"]} {address} {month}'
+    print(note)
+    print(len(note))
+    if len(note)> 140:
+        print("problem")
+        return
+    qr = make_epc_qr(name="pchq be bb van het inningscentrum", iban="BE39679200229319", amount=tax_amount, text=note, bic="PCHQBEBBXXX")
+    qr.save(output, scale=3)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+{
+    "natnum": "yy.mm.dd-key-ec",
+    "name": "Johnson, John",
+    "address": ["First line", "Next line"],
+    "signature": "/path/to/square_image.png"
+}
+
