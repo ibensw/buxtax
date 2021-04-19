@@ -107,6 +107,8 @@ def generate_tax_form(template, config, data, outfile):
     overlay_pages={}
     overlay_pages[0] = BytesIO()
     can = canvas.Canvas(overlay_pages[0], pagesize=A4)
+    can.drawString(273, 725, str(data["month"]))
+    can.drawString(290, 725, str(data["year"] % 100))
     can.drawString(305, 699, "x"*25)
     can.drawString(305, 687, "x"*25)
     can.drawString(305, 655, config["natnum"])
