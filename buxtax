@@ -16,22 +16,47 @@ import os.path
 
 MONTHS = {month_name[i]: i for i in range(1, 13)}
 TOTALREGEX = re.compile("^Total\\s+\\d+\\s+([\\d\\.]+) EUR\\s+([\\d\\.]+) EUR$")
-REQUIRED_ARGS=set(["input", "natnum", "name", "address", "signature"])
+REQUIRED_ARGS = set(["input", "natnum", "name", "address", "signature"])
 
-log.basicConfig(format='%(levelname)s: %(message)s')
+log.basicConfig(format="%(levelname)s: %(message)s")
+
 
 def main():
-    parser = argparse.ArgumentParser(description='BUX Belgian tax report converter')
-    parser.add_argument('input', type=str, help='BUX tax report (pdf)')
-    parser.add_argument('--config', '-c', action='store', type=str, help='Config file')
-    parser.add_argument('--natnum', '-i', action='store', type=str, help='National number')
-    parser.add_argument('--name', '-n', action='store', type=str, help='Full name')
-    parser.add_argument('--address', '-a', action='append', type=str, help='Address lines')
-    parser.add_argument('--output', '-o', action='store', type=str, help='Output file (pdf)')
-    parser.add_argument('--signature', '-s', action='store', type=str, help='Image to sign form (square image)')
-    parser.add_argument('--location', '-l', action='store', type=str, help='Location')
-    parser.add_argument('--date', '-d', action='store', type=str, help='Date', default=date.today().isoformat())
-    parser.add_argument('--nomail', '-m', action='store_false', help='Do not automatically prepare the email')
+    parser = argparse.ArgumentParser(description="BUX Belgian tax report converter")
+    parser.add_argument("input", type=str, help="BUX tax report (pdf)")
+    parser.add_argument("--config", "-c", action="store", type=str, help="Config file")
+    parser.add_argument(
+        "--natnum", "-i", action="store", type=str, help="National number"
+    )
+    parser.add_argument("--name", "-n", action="store", type=str, help="Full name")
+    parser.add_argument(
+        "--address", "-a", action="append", type=str, help="Address lines"
+    )
+    parser.add_argument(
+        "--output", "-o", action="store", type=str, help="Output file (pdf)"
+    )
+    parser.add_argument(
+        "--signature",
+        "-s",
+        action="store",
+        type=str,
+        help="Image to sign form (square image)",
+    )
+    parser.add_argument("--location", "-l", action="store", type=str, help="Location")
+    parser.add_argument(
+        "--date",
+        "-d",
+        action="store",
+        type=str,
+        help="Date",
+        default=date.today().isoformat(),
+    )
+    parser.add_argument(
+        "--nomail",
+        "-m",
+        action="store_false",
+        help="Do not automatically prepare the email",
+    )
     args = parser.parse_args()
 
     if args.config is None and os.path.isfile("buxtax.json"):
@@ -48,7 +73,7 @@ def main():
             log.error(f"Could not open {args.config}: {e}")
             return
 
-    overwrite_args = {k:v for k,v in vars(args).items() if v is not None}
+    overwrite_args = {k: v for k, v in vars(args).items() if v is not None}
     config.update(overwrite_args)
 
     missing_args = REQUIRED_ARGS - set(vars(args).keys())
@@ -66,40 +91,53 @@ def main():
 
     log.info("Please mail {outfile} to CPIC.TAXDIV@minfin.fed.be")
 
-    outfile=outfile[:-4]+".svg" #hack way to make it have the same filename
+    outfile = outfile[:-4] + ".svg"  # hack way to make it have the same filename
     generate_epc_code(bux_data, config, outfile)
 
-    if config.get('nomail', True):
-        call(["xdg-open", f"mailto:CPIC.TAXDIV@minfin.fed.be?subject=TOB {month_name[bux_data['month']]} {bux_data['year']}&body=See form attached"])
+    if config.get("nomail", True):
+        call(
+            [
+                "xdg-open",
+                f"mailto:CPIC.TAXDIV@minfin.fed.be?subject=TOB {month_name[bux_data['month']]} {bux_data['year']}&body=See form attached",
+            ]
+        )
+
 
 def get_taxed_total(lines, query):
     try:
         start = lines.index(query)
     except ValueError:
         return None, None
-    end = lines.index('', start)
-    totalline = lines[end+1]
+    end = lines.index("", start)
+    totalline = lines[end + 1]
     total_basis, total_tax = TOTALREGEX.match(totalline).groups()
     return (float(total_basis), float(total_tax))
+
 
 def parse_bux_report(filename):
     data = {}
     try:
-        bux_report = check_output(["pdftotext", "-layout", "-enc", "UTF-8", filename, "-"]).decode('utf-8')
+        bux_report = check_output(
+            ["pdftotext", "-layout", "-enc", "UTF-8", filename, "-"]
+        ).decode("utf-8")
     except CalledProcessError as e:
         log.error(f"Failed to call pdftotext: {e}")
         return None
 
-    bux_lines = bux_report.split('\n')
+    bux_lines = bux_report.split("\n")
     bux_lines = [line.strip() for line in bux_lines]
 
-    date_line = bux_lines[0].split(' ')
+    date_line = bux_lines[0].split(" ")
 
     data["month"] = MONTHS[date_line[-2]]
     data["year"] = int(date_line[-1])
 
-    etf_amount, etf_tax = get_taxed_total(bux_lines, "Tax on stock-exchange transactions in ETFs (0.12%)")
-    share_amount, share_tax = get_taxed_total(bux_lines, "Tax on stock-exchange transactions in shares (0.35%)")
+    etf_amount, etf_tax = get_taxed_total(
+        bux_lines, "Tax on stock-exchange transactions in ETFs (0.12%)"
+    )
+    share_amount, share_tax = get_taxed_total(
+        bux_lines, "Tax on stock-exchange transactions in shares (0.35%)"
+    )
 
     if etf_amount is not None:
         data["etf"] = {"amount": etf_amount, "tax": etf_tax}
@@ -110,26 +148,26 @@ def parse_bux_report(filename):
 
 
 def generate_tax_form(template, config, data, outfile):
-    overlay_pages={}
+    overlay_pages = {}
     overlay_pages[0] = BytesIO()
     can = canvas.Canvas(overlay_pages[0], pagesize=A4)
     can.drawString(273, 725, str(data["month"]))
     can.drawString(290, 725, str(data["year"] % 100))
-    can.drawString(305, 699, "x"*25)
-    can.drawString(305, 687, "x"*25)
+    can.drawString(305, 699, "x" * 25)
+    can.drawString(305, 687, "x" * 25)
     can.drawString(305, 655, config["natnum"])
     can.drawString(305, 643, config["name"])
     y = 620
     for addrline in config.get("address", []):
         can.drawString(305, y, addrline)
-        y-=12
+        y -= 12
 
     totaltax = 0.0
     for (taxtype, offset) in [("etf", 540), ("share", 460)]:
         if taxtype in data:
             can.drawRightString(390, offset, f"{data[taxtype]['amount']:.2f}")
             can.drawRightString(520, offset, f"{data[taxtype]['tax']:.2f}")
-            totaltax += data[taxtype]['tax']
+            totaltax += data[taxtype]["tax"]
 
     can.drawRightString(520, 330, f"{totaltax:.2f}")
     can.save()
@@ -159,16 +197,25 @@ def generate_tax_form(template, config, data, outfile):
 
 
 def generate_epc_code(data, config, output):
-    tax_amount=data.get("etf", {"tax": 0.0})["tax"] + data.get("share", {"tax": 0.0})["tax"]
-    natnum=config["natnum"].replace(".", "").replace("-", "")
+    tax_amount = (
+        data.get("etf", {"tax": 0.0})["tax"] + data.get("share", {"tax": 0.0})["tax"]
+    )
+    natnum = config["natnum"].replace(".", "").replace("-", "")
     address = ", ".join(config["address"])
-    month = month_name[data['month']].lower()
-    note=f'{natnum} {config["name"]} {address} {month}'
-    if len(note)> 140:
+    month = month_name[data["month"]].lower()
+    note = f'{natnum} {config["name"]} {address} {month}'
+    if len(note) > 140:
         log.error("EPC description too long, qr code not generated")
         return
-    qr = make_epc_qr(name="pchq be bb van het inningscentrum", iban="BE39679200229319", amount=tax_amount, text=note, bic="PCHQBEBBXXX")
+    qr = make_epc_qr(
+        name="pchq be bb van het inningscentrum",
+        iban="BE39679200229319",
+        amount=tax_amount,
+        text=note,
+        bic="PCHQBEBBXXX",
+    )
     qr.save(output, scale=3)
+
 
 if __name__ == "__main__":
     main()
