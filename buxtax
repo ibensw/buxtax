@@ -108,11 +108,11 @@ def get_taxed_total(lines, query):
         start = lines.index(query)
     except ValueError:
         return None, None
-    end = lines.index("", start)
-    totalline = lines[end + 1]
-    total_basis, total_tax = TOTALREGEX.match(totalline).groups()
-    return (float(total_basis), float(total_tax))
-
+    for line in lines[start+1:]:
+        match = TOTALREGEX.match(line)
+        if match:
+            total_basis, total_tax = match.groups()
+            return (float(total_basis), float(total_tax))
 
 def parse_bux_report(filename):
     data = {}
